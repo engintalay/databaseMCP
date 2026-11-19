@@ -96,6 +96,8 @@ Dosya: **`config.json`** (proje kökü). `.gitignore`'da olduğu için git'e **g
 
 Tüm araçlar `connection` (bağlantı adı) alır. Sonuçlar `{ content: [{type:'text', text}], isError }` formatındadır.
 
+**Ortam (environment) gösterimi:** Her araç çıktısı, çalışılan bağlantının ortamını (`test` / `prod`) da içerir. `list_tables`, `describe_table` ve `run_query` sonuçlarında başlık satırı olarak `Ortam: test` görünür; `execute` ve `export_query`/`import_file_to_table` mesajları `[test]` / `[prod]` öneki alır. Bu bilgi salt sunumdur; `config.json`'daki `environment` alanından alınır.
+
 ### 5.1 `list_tables` — tablo listesi
 ```json
 {

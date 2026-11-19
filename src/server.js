@@ -18,6 +18,8 @@
  *
  * Bağlantılar config.json içinde manuel tanımlıdır (otomatik keşif yoktur).
  * Her bağlantıda "type" (pg | sybase) ve "environment" (test | prod) zorunludur.
+* Sunum: her araç çıktısı çalışılan ortamı (test | prod) içerir; başlatma mesajı
+*   bağlantıları ortam gruplarına göre özetler. config.json düz kalır.
  */
 
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
@@ -135,26 +137,29 @@ function ok(text) {
   return { content: [{ type: 'text', text }], isError: false };
 }
 
-function tablesText(rows) {
+function tablesText(rows, environment) {
   const lines = rows.map((r) => {
     const name = r.table_name;
     return r.table_schema ? `${r.table_schema}.${name}` : name;
   });
-  return `Toplam ${rows.length} tablo:\n${lines.join('\n') || '(tablo yok)'}`;
+  const envLine = environment ? `Ortam: ${environment}\n` : '';
+  return `${envLine}Toplam ${rows.length} tablo:\n${lines.join('\n') || '(tablo yok)'}`;
 }
 
-function columnsText(rows) {
+function columnsText(rows, environment) {
   const lines = rows.map((r) => {
     const nullable = r.is_nullable === 'YES' ? ', nullable' : '';
     const def = r.column_default !== null && r.column_default !== undefined ? `  default: ${r.column_default}` : '';
     return `• ${r.column_name}  (${r.data_type}${nullable})${def}`;
   });
-  return `Tablo sütunları (${rows.length}):\n${lines.join('\n') || '(sütun yok)'}`;
+  const envLine = environment ? `Ortam: ${environment}\n` : '';
+  return `${envLine}Tablo sütunları (${rows.length}):\n${lines.join('\n') || '(sütun yok)'}`;
 }
 
-function queryResultText(connection, result) {
+function queryResultText(connection, environment, result) {
   const out = {
     connection,
+    environment,
     satir_sayisi: result.rows.length,
     sutunlar: result.columns,
     veriler: result.rows,
@@ -186,7 +191,7 @@ server.registerTool(
     } else {
       rows = await pg.listTables(conn, schema);
     }
-    return ok(tablesText(rows));
+    return ok(tablesText(rows, conn.environment));
   }
 );
 
@@ -210,7 +215,7 @@ server.registerTool(
     } else {
       rows = await pg.describeTable(conn, table);
     }
-    return ok(columnsText(rows));
+    return ok(columnsText(rows, conn.environment));
   }
 );
 
@@ -236,7 +241,7 @@ server.registerTool(
       result = await pg.runQuery(conn, query, limit);
       result.columns = result.columns || inferColumns(result.rows);
     }
-    return ok(queryResultText(connection, result));
+    return ok(queryResultText(connection, conn.environment, result));
   }
 );
 
@@ -300,7 +305,7 @@ server.registerTool(
     } else {
       written = await excel.exportTo(result.rows, columns, filename);
     }
-    return ok(`${fmt.toUpperCase()} olarak kaydedildi: ${written.path} (${written.rowCount} satır)`);
+    return ok(`[${conn.environment}] ${fmt.toUpperCase()} olarak kaydedildi: ${written.path} (${written.rowCount} satır)`);
   }
 );
 
@@ -342,7 +347,7 @@ server.registerTool(
     } else {
       result = await pg.bulkInsert(conn, table, headers, rows);
     }
-    return ok(`${result.rowCount} satır "${table}" tablosuna eklendi (${fmt.toUpperCase()}).`);
+    return ok(`[${conn.environment}] ${result.rowCount} satır "${table}" tablosuna eklendi (${fmt.toUpperCase()}).`);
   }
 );
 
@@ -351,7 +356,13 @@ server.registerTool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`[server] databaseMCP başladı. ${Object.keys(all).length} bağlantı kaydedildi.`);
+  const byEnv = {};
+  for (const conn of Object.values(all)) {
+    const e = conn.environment || '?';
+    byEnv[e] = (byEnv[e] || 0) + 1;
+  }
+  const grouped = Object.entries(byEnv).map(([e, n]) => `${e}: ${n}`).join(', ');
+  console.error(`[server] databaseMCP başladı. ${Object.keys(all).length} bağlantı kaydedildi (ortam grupları: ${grouped}).`);
 }
 
 main().catch((err) => {
