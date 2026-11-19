@@ -20,11 +20,14 @@ insan/makinaların okuyabileceği global şema tanımı.
 - **Ortam grupları**: bağlantılar `test` / `prod` anahtarları altında tanımlanır; her bağlantının
   `environment` bilgisini ayrı tekrar yazmaya gerek yoktur.
 - **Çift katman konfigürasyon**:
-  - **Global** (`~/.config/databaseMCP/config.json`) — paylaşım bağlantıları + şifreler. Git'e düşmez.
+  - **Global** (`~/.config/databaseMCP/config.json`) — paylaşım bağlantıları. Git'e düşmez.
   - **Proje** (`./config.json` veya `DATABASEMCP_CONFIG`) — projeye özel bağlantılar.
   - Proje bağlantısı, aynı adlı global bağlantının üzerine yazar.
-- **Şifre koruması**: düz metin şifreler master anahtarla AES-256-GCM (kimlik doğrulamalı) ile
-  şifrlenir ve `enc:...` formatında saklanır.
+- **Şifreler ayrı dosyada**: `config.json` artık **şifre içermez** ve başkalarıyla PAYLAŞILABİLİR.
+  Şifreler, her bağlantının `id` alanıyla eşleştiği ayrı bir `dbpassword.json` dosyasında
+  (`{ "<id>": "enc:..." }`) tutulur. `config.json` ile aynı dizindedir:
+  global için `~/.config/databaseMCP/dbpassword.json`, proje için proje dizinindedir.
+  Düz metin ya da `enc:` yazılan şifreler sunucu başladığında otomatik olarak bu dosyaya taşınır.
 
 ## Kurulum
 
@@ -41,7 +44,7 @@ npm run install:deps
 3. FreeTDS (`tsql`) var mı kontrol eder — Sybase için gerekli.
 4. Master anahtar üretir: `~/.config/databaseMCP/master.key` (izin `0600`).
    Zaten varsa `--force-key` verilmedikçe dokunmaz.
-5. Mevcut şifreli değerleri (global + proje config) yeni anahtarla yeniden şifreler.
+5. Mevcut şifreli değerleri (global + proje config VE dbpassword.json) yeni anahtarla yeniden şifreler.
 
 ```bash
 ./install.sh --force-key   # master anahtarını yenile (rotasyon)
@@ -74,7 +77,9 @@ Aktif anahtar bulunamazsa sunucu **başlatmaz** (fail-closed).
 
 Anahtar yenilediğinizde eski şifreli değerler kaybolmaz: `install.sh` önceki anahtarı yakalar,
 göç scripti (`scripts/migrate-keys.js`) onu `DATABASEMCP_OLD_KEY` ile kullanarak değerleri çözer ve
-yeni anahtarla yeniden şifreler. Göç **başarılıysan** yeni anahtar `master.key`'e yazılır.
+yeni anahtarla yeniden şifreler. Hem `config.json` içindeki `enc:...` değerler hem de
+`dbpassword.json` (`{ id: enc:... }`) yeniden şifrelenir. Göç **başarılıysan** yeni anahtar
+`master.key`'e yazılır.
 
 - Göç sırasında çözülemeyen bir değer varsa, script **yazmadan durur** (çıkış kodu `1`) — böylece
   kısmi/bozuk config veya anahtar kayması veri kaybına yol açmaz.
@@ -82,22 +87,37 @@ yeni anahtarla yeniden şifreler. Göç **başarılıysan** yeni anahtar `master
 
 ## Konfigürasyon
 
-Gerçek konfigürasyon dosyası (`config.json`) şifreli kimlik bilgileri içerdiği için **Git'e düşmez**
-(bkz. `.gitignore`). Örnek yapı için [config.example.json](./config.example.json) bakın.
+Gerçek konfigürasyon dosyası (`config.json`) artık şifre içermediği için paylaşılabilir, ancak
+yine de Git'e düşmez (bkz. `.gitignore`). Örnek yapı için
+[config.example.json](./config.example.json) bakın.
 
 ```jsonc
 {
-  "test":  { "connections": { "bağlantı_adi": { "type": "pg", "host": "...", "port": 5432, "database": "...", "user": "...", "password": "duz_metin" } } },
-  "prod":  { "connections": { "bağlantı_adi": { "type": "sybase", "host": "...", "port": 5000, "dbname": "...", "username": "...", "password": "duz_metin" } } }
+  "test":  { "connections": { "bağlantı_adi": { "type": "pg", "host": "...", "port": 5432, "database": "...", "user": "...", "id": "bağlantı-uuid", "environment": "test" } } },
+  "prod":  { "connections": { "bağlantı_adi": { "type": "sybase", "host": "...", "port": 5000, "dbname": "...", "username": "...", "id": "bağlantı-uuid", "environment": "prod" } } }
 }
 ```
 
-Şifreler düz metin yazılır; uygulama başladığında otomatik olarak şifrlenir.
+Yukarıdaki örnek **şifresiz**dir ve başkalarıyla paylaşılabilir. Şifreler `id` alanıyla
+eşleştiği `dbpassword.json` dosyasına yazılır:
+
+```jsonc
+{ "bağlantı-uuid": "enc:iv:ct:tag" }
+```
+
+`id` eksikse otomatik üretilir ve `config.json`'a yazılır. Şifreyi iki şekilde ekleyebilirsiniz:
+
+- **Düz metin** `password` alanı olarak `config.json`'a yazın — sunucu başladığında şifrelenip
+  `dbpassword.json`'a taşınır ve `config.json`'dan silinir.
+- Veya doğrudan `dbpassword.json`'a `{ "<id>": "enc:..." }` olarak ekleyin.
 
 ## Güvenlik
 
 - Anahtara (veya `DATABASEMCP_MASTER_KEY`) erişen herkes VT şifrelerini çözebilir. Anahtarı
-  paylaşmayın. `master.key` dosyası `0600` izinle saklanır.
+  paylaşmayın. `master.key` (izin `0600`) ve `dbpassword.json` dosyaları asla Git'e düşmez
+  (`.gitignore`).
+- `config.json` artık şifre içermez; paylaşımı güvenlidir. Yedekleme/taşıma sırasında
+  **`dbpassword.json` ve `master.key` birlikte** taşınmalıdır — biri olmadan şifreler çözülemez.
 - `execute` ve `import_file_to_table` araçları **prod** bağlantısında reddedilir.
 
 ## Proje yapısı
@@ -106,11 +126,12 @@ Gerçek konfigürasyon dosyası (`config.json`) şifreli kimlik bilgileri içerd
 install.sh            # bağımlılık + master anahtar + göç
 run.sh / stop.sh      # sunucu başlat/dur
 status.sh             # durum raporu
-scripts/migrate-keys.js   # şifreli değerleri yeni anahtarla yenile (fail-closed)
+scripts/migrate-keys.js   # şifreli değerleri yeni anahtarla yenile (config + dbpassword.json, fail-closed)
 src/crypto.js         # AES-256-GCM şifreleme + anahtar yönetimi
-src/config.js         # global + proje konfigürasyonu
+src/config.js         # global + proje konfigürasyonu (şifreleri dbpassword.json'a ayırır)
 src/server.js         # MCP sunucusu ve araçlar
 src/db/{pg,sybase}.js # veritabanı sürücüleri
+config.example.json   # şifresiz, paylaşılabilir örnek config
 HELP.md               # detaylı kullanım kılavuzu
 ```
 

@@ -8,8 +8,8 @@
 #   3. FreeTDS (tsql) var mı kontrol eder — Sybase için gerekli
 #   4. master anahtar üretir (~/.config/databaseMCP/master.key, izin 0600)
 #      - zaten varsa --force verilmedikçe dokunmaz
-#   5. Mevcut şifreli değerleri (global + proje config) yeni anahtarla
-#      yeniden şifreler (scripts/migrate-keys.js)
+#   5. Mevcut şifreli değerleri (global + proje config VE dbpassword.json)
+#      yeni anahtarla yeniden şifreler (scripts/migrate-keys.js)
 #
 # Kullanım: ./install.sh [--force-key] [--help]
 set -euo pipefail
@@ -35,7 +35,7 @@ usage() {
 Kullanım: $(basename "$0") [--force-key] [--help]
 
   --force-key   Mevcum master anahtarını da yeniden üret. Eski şifreli değerler
-                (config içindeki enc:...) otomatik olarak yeni anahtarla
+                (config içindeki enc:... ve dbpassword.json'daki {id: enc:...}) otomatik olarak yeni anahtarla
                 yeniden şifrlenir.
   --help        Bu yardımı göster.
 EOF

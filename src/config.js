@@ -18,10 +18,20 @@
  * Böylece bir bağlantı globalde tanımlı olup projede host/port gibi alanlarla
  * ezilebilir (ör. projeye özel test sunucusu).
  *
- * Şifre koruması: kullanıcı şifreleri DÜZ METIN olarak yazar. Uygulama
- * başladığında düz metin şifreleri gömülü master anahtarla şifreler ve şifreyi
- * yazdığı dosyaya (global veya proje) geri yazar. Sonraki başlatmalarda değer
- * "enc:..." ile başladığı için şifreleme atlanır, çözülüp kullanılır.
+ * Şifre koruması (şifreler ayrı dosyada): kullanıcı şifreleri config.json
+ * içinde DÜZ METIN ya da "enc:..." olarak YAZILABİLİR; ancak sunucu başladığında
+ * loader bunları config.json'dan OUTARIP aynı dizindeki `dbpassword.json`
+ * dosyasına (id -> enc) taşır. config.json artık şifre içermez ve başkalarıyla
+ * PAYLAŞILABİLİR; şifreler yalnızca (git'e düşmeyen) dbpassword.json'da durur.
+ *
+ * Şifre dosyası (dbpassword.json): { "<bağlantı id>": "<enc şifre>" } biçiminde
+ * bir haritadır. Global config için ~/.config/databaseMCP/dbpassword.json, proje
+ * config için proje kökündeki dbpassword.json (config.json ile aynı dizin)
+ * kullanılır. Anahtar, bağlantının `id` alanıdır.
+ *
+ * Çözüm: her bağlantının şifresi `id`'siyle dbpassword.json'dan okunur; değer
+ * "enc:..." ile başladığı için loader'da çözülmez (resolveConnection çözer),
+ * düz metne düşürülüp bağlantıda kullanılır.
  *
  * Şema (ortam bazlı gruplandırma): bağlantılar ortam anahtarları altındadır.
  *   { "test": { "connections": { ... } }, "prod": { "connections": { ... } } }
@@ -29,7 +39,9 @@
  * bağlantıda ayrı tekrar yazılmasına gerek yoktur.
  *
  * Her bağlantıya insan okuyabileceği uniq bir `id` atanır (isimden bağımsız;
- * örn. "test-x7k2m9"). `id` tanımlı değilse otomatik üretilip config'e yazılır.
+ * örn. "test-x7k2m9"). `id` hem şifre eşlemesinde (dbpassword.json) anahtar
+ * hem de config'e yazıldığı için stabil kalır. `id` tanımlı değilse otomatik
+ * üretilip config'e yazılır.
  *
  * Geriye uyum: eski düz şema { "connections": { ... } } de kabul edilir; bu
  * durumda environment her bağlantının kendi alanından okunur ve yeni şemaya
@@ -87,14 +99,65 @@ function projectConfigPath() {
 }
 
 /**
- * Belirtilen dosyadaki bağlantıları oku, düz metin şifreleri şifrele,
- * gerekiyse o dosyaya geri yaz.
+ * Verilen config dosyasının yanındaki şifre dosyasının yolunu döndürür.
+ * dbpassword.json: { "<connection id>": "<enc password>" }.
  * @param {string} configPath
- * @returns {{ connections: object, encrypted: string[] }}
+ * @returns {string}
+ */
+function passwordFilePath(configPath) {
+  return path.join(path.dirname(configPath), 'dbpassword.json');
+}
+
+/**
+ * Şifre dosyasını okuyup { id -> enc } haritası olarak döndürür.
+ * Dosya yoksa boş nesne döndürür.
+ * @param {string} pwPath
+ * @returns {Record<string,string>}
+ */
+function loadPasswordFile(pwPath) {
+  if (!fs.existsSync(pwPath)) return {};
+
+  let raw;
+  try {
+    raw = fs.readFileSync(pwPath, 'utf8');
+  } catch (e) {
+    throw new Error(`dbpassword dosyası okunamadı: ${pwPath} (${e.message})`);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`dbpassword JSON parse hatası: ${pwPath} (${e.message})`);
+  }
+
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error(
+      `dbpassword dosyası geçersiz (nesne { id: enc } bekleniyor): ${pwPath}`
+    );
+  }
+  return data;
+}
+
+/**
+ * Belirtilen dosyadaki bağlantıları okur.
+ *
+ * Şifre akışı:
+ *   - config.json'da hâlâ `password` alanı varsa (eski davranış) -> değer
+ *     (düz metinse master anahtarla şifrelenir) dbpassword.json'a (id -> enc)
+ *     taşınır ve config.json'dan OUTARILIR.
+ *   - yoksa, bağlantının `id`'siyle dbpassword.json'dan şifre okunur.
+ *
+ * config.json artık şifre içermez; şifreler yalnızca dbpassword.json'da durur.
+ *
+ * @param {string} configPath
+ * @returns {{ connections: object, encrypted: string[], passwordPath: string }}
  */
 function loadFileConnections(configPath) {
+  const pwPath = passwordFilePath(configPath);
+
   if (!fs.existsSync(configPath)) {
-    return { connections: {}, encrypted: [] };
+    return { connections: {}, encrypted: [], passwordPath: pwPath };
   }
 
   let raw;
@@ -113,16 +176,82 @@ function loadFileConnections(configPath) {
 
   const connections = {};
   const encrypted = [];
+  // Şifreler { id -> enc } haritası. Mevcut dbpassword.json'dan başlar.
+  const passwords = loadPasswordFile(pwPath);
 
-  // Yazma yardımcısı: düz metin şifreleri şifreleyip dosyaya geri yazar.
-  const writeBack = () => {
-    try {
-      fs.writeFileSync(configPath, JSON.stringify(data, null, 2) + '\n', 'utf8');
-    } catch (e) {
-      // Şifreleme başarısız olsa da çalışmayı durdurmayalım; bağlantı anında
-      // düz metin olarak kullanılmaya çalışılır (uyarı zaten verildi).
-      console.warn(`[config] şifreli değerler yazamadı: ${configPath} (${e.message})`);
+  // Değişiklik takibi: hangi dosyalar yeniden yazılacak?
+  let configDirty = false;
+  let pwDirty = false;
+
+  const writeConfig = () => {
+    // config.json artık şifre içermez: yazarken her bağlantıdan password
+    // alanını düşürüyoruz. Şifre değeri bellekteki connections nesnesinde ve
+    // dbpassword.json'da (enc) durur; bu oturumda çözülüp kullanılabilir.
+    const publicData = JSON.parse(JSON.stringify(data));
+    const stripConnections = (conns) => {
+      if (conns && typeof conns === 'object') {
+        for (const c of Object.values(conns)) {
+          if (c && typeof c === 'object') delete c.password;
+        }
+      }
+    };
+    for (const env of ['test', 'prod']) {
+      const block = publicData[env];
+      if (block && block.connections) stripConnections(block.connections);
     }
+    if (publicData.connections) stripConnections(publicData.connections);
+    try {
+      fs.writeFileSync(configPath, JSON.stringify(publicData, null, 2) + '\n', 'utf8');
+    } catch (e) {
+      console.warn(`[config] config.json yazılamadı: ${configPath} (${e.message})`);
+    }
+  };
+  const writePasswords = () => {
+    try {
+      fs.writeFileSync(pwPath, JSON.stringify(passwords, null, 2) + '\n', 'utf8');
+    } catch (e) {
+      console.warn(`[config] dbpassword.json yazılamadı: ${pwPath} (${e.message})`);
+    }
+  };
+
+  /**
+   * Bir bağlantıyı normalize et: type/env/id kontrolü + şifre yerleştirme.
+   * @param {string} name bağlantı anahtarı (isim)
+   * @param {object} conn bağlantı nesnesi (data içindena doğrudan referans)
+   * @param {string} env ortam (test | prod)
+   */
+  const normalize = (name, conn, env) => {
+    if (!conn.type || (conn.type !== 'pg' && conn.type !== 'sybase')) {
+      throw new Error(`"${name}" bağlantısında "type" alanı zorunlu (pg | sybase).`);
+    }
+    // Ortam, bağlantının environment bilgisini belirler.
+    conn.environment = env;
+    // İnsan okuyabileceği uniq ID atanır (yoksa üret; şifre eşlemesi anahtarı).
+    if (!conn.id) {
+      conn.id = makeReadableId(env);
+      configDirty = true;
+    }
+    // Şifre: config.json'daysa dbpassword.json'a taşı (ama bu oturumda
+    // kullanabilmek için bellekte enc olarak bırak; config.json yazılırken
+    // şifre alanı düşülecek). Yoksa id ile dbpassword.json'dan oku.
+    if (typeof conn.password === 'string' && conn.password !== '') {
+      const enc = isEncrypted(conn.password) ? conn.password : encrypt(conn.password);
+      if (passwords[conn.id] !== enc) {
+        passwords[conn.id] = enc;
+        pwDirty = true;
+      }
+      conn.password = enc; // bellekte enc kalır; resolveConnection çözer
+      encrypted.push(conn.id);
+      configDirty = true; // config.json'dan şifre çıkarılacak (writeConfig düşürür)
+    } else if (Object.prototype.hasOwnProperty.call(passwords, conn.id)) {
+      // enc değeri; çözümü resolveConnection'da yapılır.
+      conn.password = passwords[conn.id];
+    } else {
+      console.warn(
+        `[config] "${name}" bağlantısı (${conn.id}) için dbpassword.json'da şifre bulunamadı.`
+      );
+    }
+    connections[name] = conn;
   };
 
   // Yeni şema: ortam anahtarları (test / prod) altinda connections.
@@ -131,22 +260,7 @@ function loadFileConnections(configPath) {
     if (!envBlock) continue;
     const conns = envBlock.connections || {};
     for (const [name, conn] of Object.entries(conns)) {
-      if (!conn.type || (conn.type !== 'pg' && conn.type !== 'sybase')) {
-        throw new Error(`"${name}" bağlantısında "type" alanı zorunlu (pg | sybase).`);
-      }
-      // Ortam, bağlantının environment bilgisini belirler.
-      conn.environment = env;
-      // İnsan okuyabileceği uniq ID atanır (yoksa üret).
-      if (!conn.id) {
-        conn.id = makeReadableId(env);
-      }
-      // Şifre: düz metinse şifrele, o dosyaya geri yaz.
-      if (typeof conn.password === 'string' && conn.password !== '' && !isEncrypted(conn.password)) {
-        conn.password = encrypt(conn.password);
-        encrypted.push(name);
-        writeBack();
-      }
-      connections[name] = conn;
+      normalize(name, conn, env);
     }
   }
 
@@ -157,25 +271,18 @@ function loadFileConnections(configPath) {
         '{ "test": { "connections": {...} }, "prod": { "connections": {...} } }.'
     );
     for (const [name, conn] of Object.entries(data.connections)) {
-      if (!conn.type || (conn.type !== 'pg' && conn.type !== 'sybase')) {
-        throw new Error(`"${name}" bağlantısında "type" alanı zorunlu (pg | sybase).`);
-      }
       if (!conn.environment || (conn.environment !== 'test' && conn.environment !== 'prod')) {
         throw new Error(`"${name}" bağlantısında "environment" alanı zorunlu (test | prod).`);
       }
-      if (!conn.id) {
-        conn.id = makeReadableId(conn.environment);
-      }
-      if (typeof conn.password === 'string' && conn.password !== '' && !isEncrypted(conn.password)) {
-        conn.password = encrypt(conn.password);
-        encrypted.push(name);
-        writeBack();
-      }
-      connections[name] = conn;
+      normalize(name, conn, conn.environment);
     }
   }
 
-  return { connections, encrypted };
+  // Değişiklikleri yaz (önce şifre dosyası, sonra config).
+  if (pwDirty) writePasswords();
+  if (configDirty) writeConfig();
+
+  return { connections, encrypted, passwordPath: pwPath };
 }
 
 /**

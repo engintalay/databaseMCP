@@ -4,10 +4,10 @@
  * Şifreli değerleri aktif (yeni) master anahtarıyla yeniden şifreler.
  * install.sh tarafından çağrılır.
  *
- * Global (~/.config/databaseMCP/config.json) ve proje
- * (DATABASEMCP_CONFIG veya ./config.json) config'lerini tarar;
- * rastgele derinlikteki her `password` alanındaki `enc:...` değeri
- * şu sırayla çözer -> aktif anahtarla yeniden şifreler:
+ * Global (~/.config/databaseMCP/config.json + dbpassword.json) ve proje
+ * (DATABASEMCP_CONFIG veya ./config.json + dbpassword.json) dosyalarını tarar;
+ * config'deki her `password` alanındaki ve dbpassword.json'daki ({ id: enc })
+ * her enc:... değeri şu sırayla çözer -> aktif anahtarla yeniden şifreler:
  *   1. DATABASEMCP_OLD_KEY  (hex, 32 byte) — SADECE anahtar rotasyonunda
  *   2. Aktif anahtar (ortam/dosya)
  *   3. (legacy) Kod içinde gömülü eski anahtar
@@ -77,20 +77,35 @@ function tryDecrypt(enc) {
   }
 }
 
-// ---- Config hedefleri -------------------------------------------------------
-const targets = [
+// ---- Config + şifre dosyası hedefleri ---------------------------------------
+// Her config dosyasının yanı sıra aynı dizindeki dbpassword.json ({ id: enc })
+// da taranır; anahtar rotasyonunda her iki dosyadaki enc değerler de
+// yeniden şifrelenir.
+const cfgTargets = [
   { label: 'global', path: path.join(globalConfigDir(), 'config.json') },
   { label: 'proje', path: process.env.DATABASEMCP_CONFIG || path.join(process.cwd(), 'config.json') },
 ];
 
+const targets = [];
+for (const t of cfgTargets) {
+  if (!t.path) continue;
+  targets.push({ label: t.label, path: t.path, kind: 'config' });
+  targets.push({
+    label: `${t.label} dbpassword`,
+    path: path.join(path.dirname(t.path), 'dbpassword.json'),
+    kind: 'passwords',
+  });
+}
+
 // ---- 1. Doğrulama + toplama geçişi: her enc değeri çözülebilir mi? ----------
 // Her dosyanın içeriği bir kez okunup bellekte tutulur (atomik yazma için).
-// entries, şifreli `password` içeren nesneye DOĞRUDAN referans tutar.
+// entries, şifreli değeri içeren nesneye DOĞRUDAN referans tutar.
 const files = []; // { label, path, data }
 const entries = []; // { file, setValue, key, plain, alreadyActive, decodable }
 const errors = [];
 
-function collect(obj, fileEntry, keyPath) {
+// config.json: rastgele derinlikteki `password` alanları.
+function collectConfig(obj, fileEntry, keyPath) {
   if (!obj || typeof obj !== 'object') return;
   if (typeof obj.password === 'string' && isEncrypted(obj.password)) {
     const { plain, alreadyActive, decodable } = tryDecrypt(obj.password);
@@ -100,7 +115,22 @@ function collect(obj, fileEntry, keyPath) {
     }
   }
   for (const k of Object.keys(obj)) {
-    collect(obj[k], fileEntry, keyPath ? `${keyPath}.${k}` : k);
+    collectConfig(obj[k], fileEntry, keyPath ? `${keyPath}.${k}` : k);
+  }
+}
+
+// dbpassword.json: düz { id: enc } haritası. Her enc değer denetlenir.
+function collectPasswords(obj, fileEntry) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
+  for (const id of Object.keys(obj)) {
+    const v = obj[id];
+    if (typeof v === 'string' && isEncrypted(v)) {
+      const { plain, alreadyActive, decodable } = tryDecrypt(v);
+      entries.push({ file: fileEntry, setValue: obj, key: id, plain, alreadyActive, decodable });
+      if (!decodable) {
+        errors.push(`${fileEntry.label}[${id}]`);
+      }
+    }
   }
 }
 
@@ -114,7 +144,8 @@ for (const fileEntry of targets) {
     continue;
   }
   files.push({ label: fileEntry.label, path: fileEntry.path, data });
-  collect(data, fileEntry, '');
+  if (fileEntry.kind === 'passwords') collectPasswords(data, fileEntry);
+  else collectConfig(data, fileEntry, '');
 }
 
 if (errors.length > 0) {

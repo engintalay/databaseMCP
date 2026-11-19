@@ -4,6 +4,10 @@ node_modules/
 # Gerçek konfigürasyon — şifreli VT kimlik bilgileri içerir. ASLA commit edilmez.
 config.json
 
+# Şifreler ayrı dosyada tutulur (id -> enc). config.json ile aynı dizinde.
+# ASLA commit edilmez.
+dbpassword.json
+
 # Çıktı dosyaları (export'lar) — yerel çalışma alanı
 output/
 

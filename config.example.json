@@ -7,8 +7,9 @@
         "port": 5432,
         "database": "ornek_db",
         "user": "kullanici",
-        "password": "duz_metin_sifre",
-        "ssl": false
+        "ssl": false,
+        "id": "ornek-pg-test",
+        "environment": "test"
       },
       "ornek_sybase_test": {
         "type": "sybase",
@@ -16,7 +17,8 @@
         "port": 5000,
         "dbname": "ornek_db",
         "username": "kullanici",
-        "password": "duz_metin_sifre"
+        "id": "ornek-sybase-test",
+        "environment": "test"
       }
     }
   },
@@ -28,8 +30,9 @@
         "port": 5432,
         "database": "prod_db",
         "user": "okuyucu",
-        "password": "duz_metin_sifre",
-        "ssl": true
+        "ssl": true,
+        "id": "ornek-pg-prod",
+        "environment": "prod"
       }
     }
   }

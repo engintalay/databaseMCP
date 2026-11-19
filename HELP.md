@@ -37,6 +37,7 @@ node src/server.js
 
 Başlamada şunlar görünür:
 - `[config] N bağlantının şifresi şifrelendi: ...` (düz metin şifreler varsa)
+- `[config] "X" bağlantısı (id) için dbpassword.json'da şifre bulunamadı.` (şifresi olmayan bağlantı)
 - `[server] databaseMCP başladı. N bağlantı kaydedildi.`
 
 Sunucu **stdio** üzerinden JSON-RPC konuşur; OpenCode'a bağlanmak için MCP sunucu olarak kaydedilir.
@@ -45,8 +46,8 @@ Sunucu **stdio** üzerinden JSON-RPC konuşur; OpenCode'a bağlanmak için MCP s
 
 ## 4. Konfigürasyon
 
-Dosya: **`config.json`** (proje kökü). `.gitignore`'da olduğu için git'e **gitmez** (şifreli kimlikler nedeniyle).
-Şablon: `config.example.json` (commitlidir).
+Dosya: **`config.json`** (proje kökü). Artık şifre içermediği için paylaşılabilir, ama yine de `.gitignore`'da olduğu için git'e **gitmez**.
+Şablon: `config.example.json` (commitlidir, şifresiz).
 
 ```json
 {
@@ -58,8 +59,9 @@ Dosya: **`config.json`** (proje kökü). `.gitignore`'da olduğu için git'e **g
         "port": 5432,
         "database": "ornek_db",
         "user": "kullanici",
-        "password": "duz_metin_sifre",
-        "ssl": false
+        "ssl": false,
+        "id": "ornek-pg-test",
+        "environment": "test"
       },
       "ornek_sybase_test": {
         "type": "sybase",
@@ -67,7 +69,8 @@ Dosya: **`config.json`** (proje kökü). `.gitignore`'da olduğu için git'e **g
         "port": 5000,
         "dbname": "ornek_db",
         "username": "kullanici",
-        "password": "duz_metin_sifre"
+        "id": "ornek-sybase-test",
+        "environment": "test"
       }
     }
   },
@@ -79,11 +82,22 @@ Dosya: **`config.json`** (proje kökü). `.gitignore`'da olduğu için git'e **g
         "port": 5432,
         "database": "prod_db",
         "user": "okuyucu",
-        "password": "duz_metin_sifre",
-        "ssl": true
+        "ssl": true,
+        "id": "ornek-pg-prod",
+        "environment": "prod"
       }
     }
   }
+}
+```
+
+Yukarıdaki örnek **şifresiz**dir. Şifreler `id` alanıyla eşleştiği ayrı bir **`dbpassword.json`** dosyasında durur:
+
+```json
+{
+  "ornek-pg-test": "enc:iv:ct:tag",
+  "ornek-sybase-test": "enc:iv:ct:tag",
+  "ornek-pg-prod": "enc:iv:ct:tag"
 }
 ```
 
@@ -92,19 +106,37 @@ Bağlantılar **ortam anahtarları** (`test` / `prod`) altındadır. Ortam, bağ
 ### Zorunlu alanlar
 - **`type`** → arka ucu belirler: `pg` veya `sybase`. Yoksa sunucu başlatmaz.
 - **`environment`** → ortam anahtarından gelir (`test` / `prod`). Elle yazılmaz; yazılsa da ortam anahtarına göre düzeltilir.
-- **`id`** → insan okuyabileceği uniq bağlantı kimliği (örn. `test-x7k2m9`). Tanımlı değilse sunucu başlatırken otomatik üretir ve `config.json`'a yazar. İsimden bağımsızdır, sabit kalır.
+- **`id`** → insan okuyabileceği uniq bağlantı kimliği (örn. `test-x7k2m9`). Tanımlı değilse sunucu başlatırken otomatik üretir ve `config.json`'a yazar. İsimden bağımsızdır, sabit kalır. **`dbpassword.json`'daki anahtar da budur** — şifre bu `id` ile eşleşir.
 
 ### Tür başına alanlar
 - **PostgreSQL (`pg`):** `host`, `port`, `database`, `user`, `password`, `ssl` (opsiyonel).
 - **Sybase (`sybase`):** `host`, `port`, `dbname`, `username`, `password`.
 
-### Şifreler otomatik şifrlenir
-Şifreyi **düz metin** yazarsın. Sunucu başladığında:
-- Düz metin şifreyi **AES-256-GCM** ile şifreler,
-- `config.json`'a `enc:<iv>:<ct>:<tag>` formatında geri yazar,
-- Sonraki başlatmalarda `enc:` ile başlayan değer şifreleme **atlanır**, çözülüp kullanılır.
+### Şifreler ayrı dosyada tutulur (dbpassword.json)
+`config.json` artık **şifre içermez** ve başkalarıyla paylaşılabilir. Şifreler, her bağlantının
+`id` alanıyla eşleştiği ayrı bir **`dbpassword.json`** dosyasında saklanır:
 
-> **Güvenlik uyarısı:** Şifrelemeye kullanılan **master anahtar kodun içindedir** (`src/crypto.js` → `MASTER_KEY_HEX`). Uygulama kaynağına erişen herkes şifreleri çözebilir. Bu tekill/kişisel kullanım için kabul edilebilir bir takastır — **kodu kimseyle paylaşmayın.** İstersen `MASTER_KEY_HEX`'i değiştirip config'i yeniden şifreleyebilirsin.
+```json
+{ "<id>": "enc:<iv>:<ct>:<tag>" }
+```
+
+`dbpassword.json`, `config.json` ile **aynı dizindedir**:
+- Global config için: `~/.config/databaseMCP/dbpassword.json`
+- Proje config için: proje dizinindeki `dbpassword.json`
+
+Şifreyi iki şekilde eklersin:
+- **Düz metin** `password` alanı olarak `config.json`'a yazarsın. Sunucu başladığında düz metni
+  AES-256-GCM ile şifreler, değeri `dbpassword.json`'a (`id` ile) yazar ve `config.json`'dan
+  `password` alanını siler. Bellekte o oturum için enc değeri kalır, `resolveConnection` çözer.
+- Veya doğrudan `dbpassword.json`'a `{ "<id>": "enc:..." }` olarak eklersin.
+
+`id` eksikse otomatik üretilir, `config.json`'a yazılır ve `dbpassword.json` anahtarı olarak kullanılır.
+`enc:` ile başlayan bir `password` yazarsan o da aynı şekilde `dbpassword.json`'a taşınır.
+
+> **Güvenlik uyarısı:** Şifrelemeye kullanılan **master anahtar kodun içindedir** (`src/crypto.js` → `MASTER_KEY_HEX`).
+> Uygulama kaynağına erişen herkes şifreleri çözebilir. Bu tekill/kişisel kullanım için kabul edilebilir bir takastır —
+> **kodu kimseyle paylaşmayın.** `dbpassword.json` ve `master.key` asla git'e düşmez; yedekleme/taşıma sırasında
+> **üçü birlikte** (`config.json` olmadan da olur) taşınmalıdır — `dbpassword.json` ya da `master.key` olmadan şifreler çözülemez.
 
 ---
 
@@ -156,7 +188,7 @@ Sütun başına: ad, veri tipi, nullable, default.
 ```
 - **Prod bağlantısında reddedilir** ( açık hata).
 - **PostgreSQL:** etkilenen satır sayısı (`rowCount`) döndürülür.
-- **Sybase:** sürücü yazma için satır sayısını döndürmez → `"Yürütüldü. Etkilenen satır sayısı sürücü tarafından döndürülmedi..."` döndürülür.
+- **Sybase:** sürücü yazma için satır sayısını döndürmez → `"Yürütüldü. Etkilenen satır sayısı sürücü tarafından döndürülmedi..."` döndürür.
 - **Sorgu güvenlik kuralı:** Bu araç yazma/DDL yaptığı için risklidir. Sorgu çalıştırmadan önce plan kontrolü yapılır — etkilenen tablo/satır sayısı ve WHERE koşulu `EXPLAIN` / `SELECT` ile doğrulanır. Planı bozuk, belirsiz veya güvenli olmayan (örn. WHERE'siz `UPDATE`/`DELETE`) sorgular önce düzeltilir; düzeltemesen kullanıcıyı bilgilendirmeden çalıştırılmaz.
 
 ### 5.5 `export_query` — SELECT → dosya (`.xlsx`/`.csv`)
@@ -208,7 +240,7 @@ Prod'da yazma denemesi şu hata verir:
 
 ## 7. Güvenlik & proxy
 
-- **Şifreleme:** AES-256-GCM (kimlik doğrulamalı). Anahtar koddadır (bakın §4).
+- **Şifreleme:** AES-256-GCM (kimlik doğrulamalı). Anahtar koddadır (bakın §4). Şifreler `config.json`'da değil, `id` ile eşleştiği `dbpassword.json`'da durur.
 - **Ortab tabanlı erişim:** `test` ortamı tam CRUD, `prod` ortamı salt-okunur (`execute` = yazma/DDL reddedilir). Ortam `config.json`'daki ortam anahtarından (`test`/`prod`) alınır, her bağlantıda ayrı yazılmaz.
 - **Proxy-dışı bağlantı:** VT bağlantıları her zaman doğrudan TCP ile kurulur. Bağlantı anında proxy ortam değişkenleri (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` vb.) geçici olarak kaldırılır, işlem bitince geri yüklenir (`src/proxy.js`).
 
@@ -230,9 +262,10 @@ Prod'da yazma denemesi şu hata verir:
 | `[server] config.json boş veya mevcut. ...` | `config.json` yok/boş. `config.example.json`'dan kopyala ve doldur. |
 | `"X" bağlantısında "type" alanı zorunlu (pg \| sybase).` | Her bağlantıda `type` ekle. |
 | `"X" bağlantısında "environment" alanı zorunlu (test \| prod).` | Her bağlantıda `environment` ekle. |
+| `dbpassword.json'da şifre bulunamadı: "X" (id)` | Bağlantının `id`'si için `dbpassword.json`'da giriş yok. Düz metin `password` yaz ya da `dbpassword.json`'a `{ "<id>": "enc:..." }` ekle. |
 | `Bağlantı bulunamadı: "X". Mevcut bağlantılar: ...` | Adı yanlış yazmışsın; geçerli adları listele. |
 | `Sybase köprü jar'ı bulunamadı: ...` | `node-sybase` kurulu değil / `JAR_PATH` çözülmedi. `npm install` yap. |
-| `Şifre çözülemedi: yanlış master anahtar` | `MASTER_KEY_HEX` değişmiş veya config bozulmuş. |
+| `Şifre çözülemedi: yanlış master anahtar` | `MASTER_KEY_HEX` değişmiş veya `dbpassword.json` farklı anahtarla şifrelenmiş. Anahtar rotasyonu için `install.sh --force-key` kullan (bakın README → Anahtar rotasyonu). |
 | `Çıktı yolu output/ klasörünün dışına çıkamaz.` | `filename` dizin içermemeli, sadece dosya adı ver. |
 
 ---
@@ -241,12 +274,14 @@ Prod'da yazma denemesi şu hata verir:
 
 ```
 databaseMCP/
-├── config.example.json   # şablon (commitlidir)
-├── config.json           # gerçek bağlantılar (.gitignore'da)
+├── config.example.json   # şablon (şifresiz, commitlidir)
+├── config.json           # gerçek bağlantılar (şifresiz; .gitignore'da)
+├── dbpassword.json       # id -> enc şifreler (.gitignore'da, asla commit edilmez)
+├── master.key            # aktif master anahtar (global, .gitignore'da)
 ├── output/               # export/import dosyaları
 ├── src/
 │   ├── server.js         # MCP stdio sunucusu (6 araç)
-│   ├── config.js         # konfig + otomatik şifreleme + type/environment zorunluluğu
+│   ├── config.js         # konfig + şifreleri dbpassword.json'a ayırma + type/environment zorunluluğu
 │   ├── crypto.js         # AES-256-GCM + gömülü master anahtar
 │   ├── proxy.js          # proxy env temizliği
 │   ├── io.js             # güvenli dosya yolu (output/ sınırı)
