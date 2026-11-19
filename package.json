@@ -1,12 +1,21 @@
 {
   "name": "databasemcp",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "MCP stdio sunucusu — PostgreSQL ve Sybase için sorgu/yazma araçları.",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "install:deps": "bash install.sh",
+    "start": "bash run.sh",
+    "run": "bash run.sh",
+    "stop": "bash stop.sh",
+    "status": "bash status.sh"
   },
-  "keywords": [],
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "postgresql",
+    "sybase",
+    "database"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
@@ -15,6 +24,7 @@
     "csv-parse": "^7.0.3",
     "csv-stringify": "^6.9.0",
     "exceljs": "^4.4.0",
+    "js-yaml": "^5.5.0",
     "node-sybase": "^1.1.8",
     "pg": "^8.23.1"
   }

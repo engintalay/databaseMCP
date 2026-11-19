@@ -6,6 +6,7 @@
  * Araçlar:
  *   list_tables            - bir bağlantıdaki kullanıcı tablolarını listeler
  *   describe_table         - tablo tanımı (sütunlar)
+ *   describe_schema        - global şema (schema.yaml) tanımı, sorgu bağlamı
  *   run_query              - okuma (SELECT)
  *   execute                - yazma / DDL (test ortamında; prod bağlantısında reddedilir)
  *   export_query           - SELECT -> .xlsx/.csv (output/ klasörüne)
@@ -26,6 +27,10 @@ const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
 const { z } = require('zod');
 
+const path = require('node:path');
+const fs = require('node:fs');
+
+const yaml = require('js-yaml');
 const config = require('./config');
 const { SybaseManager } = require('./db/sybase');
 const pg = require('./db/pg');
@@ -34,6 +39,44 @@ const csv = require('./csv');
 const io = require('./io');
 
 const SERVER_INFO = { name: 'databaseMCP', version: '1.0.0' };
+
+// ---- Global şema tanımı (schema.yaml) --------------------------------------
+//
+// ~/.config/databaseMCP/schema.yaml — insanın okuyabileceği, makinenin
+// sorgu kurarken bağlam olarak kullanabileceği global şema. Foreign key
+// olmadığı için ilişkiler `confidence` (high/medium/low) ile işaretlidir.
+// Dosya mevcut değilse sunucu yine de başlar (şema opsiyoneldir).
+
+/**
+ * Global şema dosyasını yükler. Yoksa null döndürür ve uyarır.
+ * @returns {object|null}
+ */
+function loadSchema() {
+  const schemaPath = path.join(config.globalConfigPath(), '..', 'schema.yaml');
+  if (!fs.existsSync(schemaPath)) {
+    console.warn(`[server] schema.yaml bulunamadı: ${schemaPath} (şemanın bağlamı kullanılmayacak)`);
+    return null;
+  }
+  try {
+    const doc = yaml.load(fs.readFileSync(schemaPath, 'utf8'));
+    console.log(`[server] schema.yaml yüklendi: ${Object.keys((doc && doc.databases) || {}).join(', ') || '(veritabanı yok)'}`);
+    return doc;
+  } catch (e) {
+    console.warn(`[server] schema.yaml okunamadı: ${e.message}`);
+    return null;
+  }
+}
+
+const schema = loadSchema();
+
+/**
+ * Belirli bir ortamın (test|prod) tablo tanımlarını döndürür.
+ * @param {string} env
+ */
+function schemaTables(env) {
+  if (!schema || !schema.databases) return {};
+  return (schema.databases[env] && schema.databases[env].tables) || {};
+}
 
 // ---- Bağlantı yönetimi -----------------------------------------------------
 
@@ -167,6 +210,61 @@ function queryResultText(connection, environment, result) {
   return JSON.stringify(out, null, 2);
 }
 
+/**
+ * Global şemadan bir ortamın (test|prod) tablo tanımlarını okunabilir metne
+ * çevirir. İlişkiler (confidence + source) dahil.
+ * @param {string} env
+ */
+function schemaText(env) {
+  if (!schema) {
+    return 'Global şema (schema.yaml) yüklenmedi.';
+  }
+  const db = schema.databases[env];
+  if (!db) {
+    return `"${env}" ortamı şemada tanımlı değil. Mevcut ortamlar: ` +
+      Object.keys(schema.databases).join(', ');
+  }
+  const tables = db.tables || {};
+  const lines = [];
+  lines.push(`Şema ortamı: ${env}  (bağlantı: ${db.connection || '?'})`);
+  lines.push(`Açıklama: ${String(db.description || '').replace(/\s+/g, ' ').trim()}`);
+  lines.push('');
+
+  // _NOT gibi meta anahtarları atla
+  const tableNames = Object.keys(tables).filter((k) => k !== '_NOT');
+  for (const name of tableNames) {
+    const t = tables[name];
+    lines.push(`### ${name}`);
+    if (t.description) lines.push(`  ${String(t.description).replace(/\s+/g, ' ').trim()}`);
+    if (t.primary_key) lines.push(`  Anahtar: ${Array.isArray(t.primary_key) ? t.primary_key.join(', ') : t.primary_key}`);
+    if (t.columns) {
+      const cols = Object.entries(t.columns).map(([c, info]) => {
+        const pk = info.pk ? ' [PK]' : '';
+        return `  • ${c} (${info.type}${pk})`;
+      });
+      lines.push(cols.join('\n'));
+    }
+    if (t.relationships && t.relationships.length) {
+      const rels = t.relationships.map((r) => {
+        const note = r.note ? `  # ${r.note.replace(/\s+/g, ' ')}` : '';
+        return `  → ${r.to}  (${r.via})  [confidence: ${r.confidence}, source: ${r.source}]${note}`;
+      });
+      lines.push(rels.join('\n'));
+    }
+    lines.push('');
+  }
+
+  // Meta: ortak tanımlalar
+  if (schema.business_keys) {
+    lines.push('--- Ortak İş Anahtarları ---');
+    for (const [k, v] of Object.entries(schema.business_keys)) {
+      lines.push(`• ${k} (${v.tip})  ->  ${v.birlestirdigi_tabolar.join(', ')}`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
 // ---- Sunucu ------------------------------------------------------------
 
 const server = new McpServer(SERVER_INFO);
@@ -219,7 +317,31 @@ server.registerTool(
   }
 );
 
-// 3) run_query
+// 3) describe_schema — global şema tanımı (insan + makine için bağlam)
+server.registerTool(
+  'describe_schema',
+  {
+    title: 'Şema Tanımı',
+    description: 'Global şema (schema.yaml) tanımı. Bir ortamın (test|prod) tablolarını, sütunlarını ve business-key/ilişki notlarını okunabilir metne çevirir. Sorgu kurarken bağlam olarak kullanın.',
+    inputSchema: z.object({
+      environment: z.enum(['test', 'prod']).optional().describe('Tanımlanacak ortam (verilen yoksa tüm ortam listesi)'),
+    }),
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  async ({ environment }) => {
+    if (!schema) {
+      return ok('Global şema (schema.yaml) tanımlı değil.');
+    }
+    if (!environment) {
+      const envs = Object.keys(schema.databases || {});
+      return ok(`Global şema. Mevcut ortamlar: ${envs.join(', ') || '(yok)'}. ` +
+        `Kullanım: environment = test | prod.`);
+    }
+    return ok(schemaText(environment));
+  }
+);
+
+// 4) run_query
 server.registerTool(
   'run_query',
   {
@@ -245,7 +367,7 @@ server.registerTool(
   }
 );
 
-// 4) execute  (yazma / DDL — prod reddedilir)
+// 5) execute  (yazma / DDL — prod reddedilir)
 server.registerTool(
   'execute',
   {
@@ -272,7 +394,7 @@ server.registerTool(
   }
 );
 
-// 5) export_query
+// 6) export_query
 server.registerTool(
   'export_query',
   {
@@ -309,7 +431,7 @@ server.registerTool(
   }
 );
 
-// 6) import_file_to_table  (yazma — prod reddedilir)
+// 7) import_file_to_table  (yazma — prod reddedilir)
 server.registerTool(
   'import_file_to_table',
   {
