@@ -25,6 +25,7 @@ const { withNoProxy } = require('../proxy');
 const JAR_PATH = path.join(
   __dirname,
   '..',
+  '..',
   'node_modules',
   'node-sybase',
   'dist',
@@ -106,7 +107,15 @@ class SybaseManager {
       if (!this.has(name)) {
         return Promise.reject(new Error(`Sybase bağlantısı bulunamadı: "${name}"`));
       }
-      return this.sybase.exec(sql, name);
+      // node-sybase'ın SyBase.exec() metodu named pool için yanlışlıkla
+      // generic-pool nesnesi üzerinden .execute() çağırıyor ("pool.execute is
+      // not a function"). Bu yüzden doğrudan DBPool sarmalısının execute()
+      // metodunu kullanırız; o bir Promise döndürür ve sonucu resolver.
+      const pool = this.sybase.DBPools[name];
+      if (!pool || typeof pool.execute !== 'function') {
+        return Promise.reject(new Error(`Sybase bağlantısı bulunamadı: "${name}"`));
+      }
+      return pool.execute(sql);
     });
   }
 
@@ -129,11 +138,7 @@ class SybaseManager {
    */
   async query(name, sql, limit) {
     return withNoProxy(async () => {
-      let rawSql = sql.trim();
-      if (!rawSql.endsWith(';')) rawSql += ';';
-      if (limit && limit > 0 && !/\blimit\b/i.test(rawSql)) {
-        rawSql += ` LIMIT ${Number(limit)}`;
-      }
+      let rawSql = applySybaseLimit(sql, limit);
       const data = await this.execRaw(name, rawSql);
       return normalizeResult(data);
     });
@@ -146,7 +151,8 @@ class SybaseManager {
    */
   async execute(name, sql) {
     return withNoProxy(async () => {
-      const data = await this.execRaw(name, sql.trim());
+      const rawSql = sql.trim().replace(/;+\s*$/, '');
+      const data = await this.execRaw(name, rawSql);
       const normalized = normalizeResult(data);
       return {
         success: true,
@@ -199,6 +205,40 @@ class SybaseManager {
  * @param {*} data
  * @returns {{rows: Array<object>, columns: Array<string>}}
  */
+/**
+ * Sybase ASE için LIMIT/TOP'u uygun forma getirir.
+ *
+ * Sybase ASE (jconn3) SQL sözdizimi `LIMIT n`'i desteklemez; satır sınırı
+ * için `TOP n` kullanılmalıdır. Ayrıca sorgu sonundaki ';' karakterini de
+ * temizleriz (ASE onu reddeder).
+ *
+ * - Sorgu `SELECT` ile başlıyorsa, `SELECT`'den sonra `TOP n` ekleriz ve
+ *   sütun takma adlarını koruruz.
+ * - Sorgu zaten `TOP`/`LIMIT` içeriyorsa dokunmayız.
+ * - Diğer durumlarda sorguyu alt sorgu olarak sararız.
+ *
+ * @param {string} sql
+ * @param {number} [limit]
+ * @returns {string}
+ */
+function applySybaseLimit(sql, limit) {
+  let rawSql = String(sql == null ? '' : sql).trim();
+  // Sondaki ';' karakterlerini temizle (ASE reddeder).
+  rawSql = rawSql.replace(/;+\s*$/, '');
+
+  if (!limit || limit <= 0) return rawSql;
+  // Zaten top/limit varsa dokunma.
+  if (/\b(top|limit)\b/i.test(rawSql)) return rawSql;
+
+  const top = `TOP ${Number(limit)}`;
+  const m = /^select\s+/i.exec(rawSql);
+  if (m) {
+    return rawSql.replace(/^select\s+/i, `SELECT ${top} `);
+  }
+  // Alt sorgu olarak sar.
+  return `SELECT ${top} * FROM (${rawSql}) AS _limit`;
+}
+
 function normalizeResult(data) {
   const rows = [];
   const columnSet = new Set();
