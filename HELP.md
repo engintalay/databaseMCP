@@ -50,33 +50,49 @@ Dosya: **`config.json`** (proje kökü). `.gitignore`'da olduğu için git'e **g
 
 ```json
 {
-  "connections": {
-    "ornek_postgres_test": {
-      "type": "pg",
-      "environment": "test",
-      "host": "127.0.0.1",
-      "port": 5432,
-      "database": "ornek_db",
-      "user": "kullanici",
-      "password": "duz_metin_sifre",
-      "ssl": false
-    },
-    "ornek_sybase_test": {
-      "type": "sybase",
-      "environment": "test",
-      "host": "127.0.0.1",
-      "port": 5000,
-      "dbname": "ornek_db",
-      "username": "kullanici",
-      "password": "duz_metin_sifre"
+  "test": {
+    "connections": {
+      "ornek_postgres_test": {
+        "type": "pg",
+        "host": "127.0.0.1",
+        "port": 5432,
+        "database": "ornek_db",
+        "user": "kullanici",
+        "password": "duz_metin_sifre",
+        "ssl": false
+      },
+      "ornek_sybase_test": {
+        "type": "sybase",
+        "host": "127.0.0.1",
+        "port": 5000,
+        "dbname": "ornek_db",
+        "username": "kullanici",
+        "password": "duz_metin_sifre"
+      }
+    }
+  },
+  "prod": {
+    "connections": {
+      "ornek_postgres_prod": {
+        "type": "pg",
+        "host": "db.example.com",
+        "port": 5432,
+        "database": "prod_db",
+        "user": "okuyucu",
+        "password": "duz_metin_sifre",
+        "ssl": true
+      }
     }
   }
 }
 ```
 
+Bağlantılar **ortam anahtarları** (`test` / `prod`) altındadır. Ortam, bağlantının kategori bilgisini belirler; her bağlantıda `environment` ayrı tekrar yazılmaz.
+
 ### Zorunlu alanlar
 - **`type`** → arka ucu belirler: `pg` veya `sybase`. Yoksa sunucu başlatmaz.
-- **`environment`** → kategori: `test` veya `prod`. Yoksa sunucu başlatmaz.
+- **`environment`** → ortam anahtarından gelir (`test` / `prod`). Elle yazılmaz; yazılsa da ortam anahtarına göre düzeltilir.
+- **`id`** → insan okuyabileceği uniq bağlantı kimliği (örn. `test-x7k2m9`). Tanımlı değilse sunucu başlatırken otomatik üretir ve `config.json`'a yazar. İsimden bağımsızdır, sabit kalır.
 
 ### Tür başına alanlar
 - **PostgreSQL (`pg`):** `host`, `port`, `database`, `user`, `password`, `ssl` (opsiyonel).

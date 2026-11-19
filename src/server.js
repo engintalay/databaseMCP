@@ -362,7 +362,13 @@ async function main() {
     byEnv[e] = (byEnv[e] || 0) + 1;
   }
   const grouped = Object.entries(byEnv).map(([e, n]) => `${e}: ${n}`).join(', ');
-  console.error(`[server] databaseMCP başladı. ${Object.keys(all).length} bağlantı kaydedildi (ortam grupları: ${grouped}).`);
+  const listed = Object.entries(all)
+    .map(([name, c]) => `${name} [${c.id || '?'}]`)
+    .join(', ');
+  console.error(
+    `[server] databaseMCP başladı. ${Object.keys(all).length} bağlantı kaydedildi ` +
+      `(ortam grupları: ${grouped}).\n  Bağlantılar: ${listed}`
+  );
 }
 
 main().catch((err) => {

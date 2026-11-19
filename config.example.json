@@ -1,33 +1,36 @@
 {
-  "connections": {
-    "ornek_postgres_test": {
-      "type": "pg",
-      "environment": "test",
-      "host": "127.0.0.1",
-      "port": 5432,
-      "database": "ornek_db",
-      "user": "kullanici",
-      "password": "duz_metin_sifre",
-      "ssl": false
-    },
-    "ornek_sybase_test": {
-      "type": "sybase",
-      "environment": "test",
-      "host": "127.0.0.1",
-      "port": 5000,
-      "dbname": "ornek_db",
-      "username": "kullanici",
-      "password": "duz_metin_sifre"
-    },
-    "ornek_postgres_prod": {
-      "type": "pg",
-      "environment": "prod",
-      "host": "db.example.com",
-      "port": 5432,
-      "database": "prod_db",
-      "user": "okuyucu",
-      "password": "duz_metin_sifre",
-      "ssl": true
+  "test": {
+    "connections": {
+      "ornek_postgres_test": {
+        "type": "pg",
+        "host": "127.0.0.1",
+        "port": 5432,
+        "database": "ornek_db",
+        "user": "kullanici",
+        "password": "duz_metin_sifre",
+        "ssl": false
+      },
+      "ornek_sybase_test": {
+        "type": "sybase",
+        "host": "127.0.0.1",
+        "port": 5000,
+        "dbname": "ornek_db",
+        "username": "kullanici",
+        "password": "duz_metin_sifre"
+      }
+    }
+  },
+  "prod": {
+    "connections": {
+      "ornek_postgres_prod": {
+        "type": "pg",
+        "host": "db.example.com",
+        "port": 5432,
+        "database": "prod_db",
+        "user": "okuyucu",
+        "password": "duz_metin_sifre",
+        "ssl": true
+      }
     }
   }
 }

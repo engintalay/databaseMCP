@@ -23,14 +23,45 @@
  * yazdığı dosyaya (global veya proje) geri yazar. Sonraki başlatmalarda değer
  * "enc:..." ile başladığı için şifreleme atlanır, çözülüp kullanılır.
  *
- * environment (kategori): her bağlantıda ZORUNLU. "test" veya "prod".
- * Belirtilmezse sunucu başlatmaz.
+ * Şema (ortam bazlı gruplandırma): bağlantılar ortam anahtarları altındadır.
+ *   { "test": { "connections": { ... } }, "prod": { "connections": { ... } } }
+ * Ortam ("test"/"prod") bağlantının environment bilgisini belirler; her
+ * bağlantıda ayrı tekrar yazılmasına gerek yoktur.
+ *
+ * Her bağlantıya insan okuyabileceği uniq bir `id` atanır (isimden bağımsız;
+ * örn. "test-x7k2m9"). `id` tanımlı değilse otomatik üretilip config'e yazılır.
+ *
+ * Geriye uyum: eski düz şema { "connections": { ... } } de kabul edilir; bu
+ * durumda environment her bağlantının kendi alanından okunur ve yeni şemaya
+ * geçilmesi için bir uyarı verilir.
+ *
+ * Sunum için loader, ortam gruplarını düz { name -> conn } haritasına çevirir
+ * ve her bağlantının environment/id alanlarını ortamanından doldurur. Böylece
+ * tüketiciler (server.js) ortam gruplandırmasından habersiz çalışır.
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
 const { encrypt, decrypt, isEncrypted } = require('./crypto');
+
+/**
+ * İnsan okuyabileceği, uniq bağlantı ID'si üretir. İsimden bağımsızdır;
+ * ortama bir prefix ekler ve arkına rastgele okunabilir token koyar.
+ * Örnek: "test-x7k2m9". Bir kez üretilip config'e yazıldığı için stabil kalır.
+ * @param {string} env
+ * @returns {string}
+ */
+function makeReadableId(env) {
+  const token = crypto
+    .randomBytes(4)
+    .toString('base64url')
+    .replace(/[^a-z0-9]/gi, '')
+    .slice(0, 6)
+    .toLowerCase();
+  return `${env}-${token}`;
+}
 
 /** Varsayılan proje kökündeki config yolu (eski davranış / geriye uyum). */
 const DEFAULT_CONFIG_PATH = path.join(__dirname, '..', 'config.json');
@@ -80,33 +111,67 @@ function loadFileConnections(configPath) {
     throw new Error(`config JSON parse hatası: ${configPath} (${e.message})`);
   }
 
-  const connections = data.connections || {};
+  const connections = {};
   const encrypted = [];
 
-  for (const [name, conn] of Object.entries(connections)) {
-    // type zorunlu (pg | sybase) — backend'i belirler.
-    if (!conn.type || (conn.type !== 'pg' && conn.type !== 'sybase')) {
-      throw new Error(
-        `"${name}" bağlantısında "type" alanı zorunlu (pg | sybase).`
-      );
+  // Yazma yardımcısı: düz metin şifreleri şifreleyip dosyaya geri yazar.
+  const writeBack = () => {
+    try {
+      fs.writeFileSync(configPath, JSON.stringify(data, null, 2) + '\n', 'utf8');
+    } catch (e) {
+      // Şifreleme başarısız olsa da çalışmayı durdurmayalım; bağlantı anında
+      // düz metin olarak kullanılmaya çalışılır (uyarı zaten verildi).
+      console.warn(`[config] şifreli değerler yazamadı: ${configPath} (${e.message})`);
     }
-    // environment zorunlu
-    if (!conn.environment || (conn.environment !== 'test' && conn.environment !== 'prod')) {
-      throw new Error(
-        `"${name}" bağlantısında "environment" alanı zorunlu (test | prod).`
-      );
-    }
-    // şifre: düz metinse şifrele, o dosyaya geri yaz
-    if (typeof conn.password === 'string' && conn.password !== '' && !isEncrypted(conn.password)) {
-      conn.password = encrypt(conn.password);
-      encrypted.push(name);
-      try {
-        fs.writeFileSync(configPath, JSON.stringify(data, null, 2) + '\n', 'utf8');
-      } catch (e) {
-        // Şifreleme başarısız olsa da çalışmayı durdurmayalım; bağlantı anında
-        // düz metin olarak kullanılmaya çalışılır (uyarı zaten verildi).
-        console.warn(`[config] şifreli değerler yazamadı: ${configPath} (${e.message})`);
+  };
+
+  // Yeni şema: ortam anahtarları (test / prod) altinda connections.
+  for (const env of ['test', 'prod']) {
+    const envBlock = data[env];
+    if (!envBlock) continue;
+    const conns = envBlock.connections || {};
+    for (const [name, conn] of Object.entries(conns)) {
+      if (!conn.type || (conn.type !== 'pg' && conn.type !== 'sybase')) {
+        throw new Error(`"${name}" bağlantısında "type" alanı zorunlu (pg | sybase).`);
       }
+      // Ortam, bağlantının environment bilgisini belirler.
+      conn.environment = env;
+      // İnsan okuyabileceği uniq ID atanır (yoksa üret).
+      if (!conn.id) {
+        conn.id = makeReadableId(env);
+      }
+      // Şifre: düz metinse şifrele, o dosyaya geri yaz.
+      if (typeof conn.password === 'string' && conn.password !== '' && !isEncrypted(conn.password)) {
+        conn.password = encrypt(conn.password);
+        encrypted.push(name);
+        writeBack();
+      }
+      connections[name] = conn;
+    }
+  }
+
+  // Eski düz şema (geriye uyum): connections + her biri environment alanlı.
+  if (data.connections) {
+    console.warn(
+      '[config] Eski düz "connections" şeması algılandı. Yeni ortam bazlı şemaya geçin: ' +
+        '{ "test": { "connections": {...} }, "prod": { "connections": {...} } }.'
+    );
+    for (const [name, conn] of Object.entries(data.connections)) {
+      if (!conn.type || (conn.type !== 'pg' && conn.type !== 'sybase')) {
+        throw new Error(`"${name}" bağlantısında "type" alanı zorunlu (pg | sybase).`);
+      }
+      if (!conn.environment || (conn.environment !== 'test' && conn.environment !== 'prod')) {
+        throw new Error(`"${name}" bağlantısında "environment" alanı zorunlu (test | prod).`);
+      }
+      if (!conn.id) {
+        conn.id = makeReadableId(conn.environment);
+      }
+      if (typeof conn.password === 'string' && conn.password !== '' && !isEncrypted(conn.password)) {
+        conn.password = encrypt(conn.password);
+        encrypted.push(name);
+        writeBack();
+      }
+      connections[name] = conn;
     }
   }
 
