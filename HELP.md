@@ -157,6 +157,7 @@ Sütun başına: ad, veri tipi, nullable, default.
 - **Prod bağlantısında reddedilir** ( açık hata).
 - **PostgreSQL:** etkilenen satır sayısı (`rowCount`) döndürülür.
 - **Sybase:** sürücü yazma için satır sayısını döndürmez → `"Yürütüldü. Etkilenen satır sayısı sürücü tarafından döndürülmedi..."` döndürülür.
+- **Sorgu güvenlik kuralı:** Bu araç yazma/DDL yaptığı için risklidir. Sorgu çalıştırmadan önce plan kontrolü yapılır — etkilenen tablo/satır sayısı ve WHERE koşulu `EXPLAIN` / `SELECT` ile doğrulanır. Planı bozuk, belirsiz veya güvenli olmayan (örn. WHERE'siz `UPDATE`/`DELETE`) sorgular önce düzeltilir; düzeltemesen kullanıcıyı bilgilendirmeden çalıştırılmaz.
 
 ### 5.5 `export_query` — SELECT → dosya (`.xlsx`/`.csv`)
 ```json
@@ -208,6 +209,7 @@ Prod'da yazma denemesi şu hata verir:
 ## 7. Güvenlik & proxy
 
 - **Şifreleme:** AES-256-GCM (kimlik doğrulamalı). Anahtar koddadır (bakın §4).
+- **Ortab tabanlı erişim:** `test` ortamı tam CRUD, `prod` ortamı salt-okunur (`execute` = yazma/DDL reddedilir). Ortam `config.json`'daki ortam anahtarından (`test`/`prod`) alınır, her bağlantıda ayrı yazılmaz.
 - **Proxy-dışı bağlantı:** VT bağlantıları her zaman doğrudan TCP ile kurulur. Bağlantı anında proxy ortam değişkenleri (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` vb.) geçici olarak kaldırılır, işlem bitince geri yüklenir (`src/proxy.js`).
 
 ---
