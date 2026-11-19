@@ -1,0 +1,12 @@
+# Node (bağımlılıklar yerel kurulum; commit edilmez)
+node_modules/
+
+# Gerçek konfigürasyon — şifreli VT kimlik bilgileri içerir. ASLA commit edilmez.
+config.json
+
+# Çıktı dosyaları (export'lar) — yerel çalışma alanı
+output/
+
+# Log / geçici
+*.log
+.DS_Store
