@@ -1,0 +1,20 @@
+{
+  "mcp": {
+    "servers": {
+      "databaseMCP": {
+        "type": "local",
+        "command": [
+          "node",
+          "/home/engin/projects/databaseMCP/src/mcp/stdio.mjs"
+        ]
+      },
+      "testMCP": {
+        "type": "local",
+        "command": [
+          "node",
+          "/home/engin/projects/databaseMCP/src/mcp/test.mjs"
+        ]
+      }
+    }
+  }
+}
