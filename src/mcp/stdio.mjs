@@ -13,6 +13,13 @@ const server = new Server(
     capabilities: {
       tools: {},
     },
+    instructions:
+      'databaseMCP: yapılandırılmış veritabanlarında SQL çalıştırır. ' +
+      'Kullanıcı "databaseMCP help" yazar veya yardım isterse `help` tool\'unu çağır. ' +
+      'ÖNEMLİ: tool çıktısı kullanıcıya görünmez; bu yüzden dönen dokümanı ÖZETLEMEDEN, ' +
+      'eksiksiz ve kelimesi kelimesine markdown olarak yanıtına yaz. ' +
+      'Akış: list_connections -> select_connection -> execute_query. ' +
+      'execute_query connection verilmezse aktif VT üzerinde çalışır.',
   }
 );
 
@@ -54,6 +61,11 @@ const tools = [
       required: ['query'],
     },
   },
+  {
+    name: 'help',
+    description: 'databaseMCP kullanım dokümanını döndürür: tool listesi, kullanım akışı, örnekler ve mevcut bağlantılar.',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -67,8 +79,91 @@ function ok(data) {
   };
 }
 
+// Kullanım dokümanı (canlı bağlantı bilgileriyle)
+function buildHelp() {
+  const { connections } = loadConfig();
+  const entries = Object.entries(connections);
+  const activeEntry = entries.find(([, c]) => c.id === activeConnectionId);
+
+  const connLines = entries.length
+    ? entries
+        .map(([name, c]) => {
+          const mark = c.id === activeConnectionId ? '  <-- AKTİF' : '';
+          const db = c.database || c.dbname || '-';
+          return `  - ${name}  [${c.type}]  ${c.host}:${c.port}/${db}  (env: ${c.environment || '-'})${mark}`;
+        })
+        .join('\n')
+    : '  (tanımlı bağlantı yok)';
+
+  return `# databaseMCP — Kullanım Dokümanı
+
+databaseMCP, yapılandırılmış veritabanlarına (Sybase, PostgreSQL) SQL sorgusu
+çalıştırmak için bir MCP sunucusudur. Oturum bazında "aktif VT" (veritabanı)
+kavramı vardır: bir kez seçersiniz, sonraki sorgular o VT üzerinde çalışır.
+
+## Tool'lar
+
+1. list_connections
+   Yapılandırılmış tüm bağlantıları listeler. Aktif olan "isActive: true" ile
+   işaretlenir. Parametre almaz.
+
+2. select_connection
+   Aktif VT'yi seçer. Bundan sonra connection parametresi verilmeyen
+   execute_query çağrıları bu VT üzerinde çalışır.
+   Parametre: { "connection": "<bağlantı adı>" }
+
+3. execute_query
+   SQL sorgusu çalıştırır. Sadece SELECT önerilir (yazma/DDL risklidir).
+   Parametre: { "query": "<SQL>", "connection": "<opsiyonel>" }
+   - connection verilmezse aktif VT kullanılır.
+   - Aktif VT yoksa ve connection verilmezse hata döner.
+
+4. help
+   Bu dokümanı döndürür.
+
+## Önerilen akış
+
+  1) list_connections            -> mevcut bağlantıları gör
+  2) select_connection           -> birini aktif yap
+  3) execute_query               -> sorguyu çalıştır (connection gerekmez)
+
+## Örnekler
+
+  # Bağlantıları listele
+  list_connections
+
+  # evdb_test'i aktif yap
+  select_connection { "connection": "evdb_test" }
+
+  # Aktif VT üzerinde sorgu
+  execute_query { "query": "SELECT TOP 10 * FROM dbo.SOME_TABLE" }
+
+  # Belirli bir bağlantı üzerinde (aktif VT'yi değiştirmeden)
+  execute_query { "connection": "RAPOR", "query": "SELECT 1 AS test" }
+
+## Mevcut bağlantılar
+${connLines}
+
+## Aktif VT
+  ${activeEntry ? `${activeEntry[0]} (${activeConnectionId})` : 'seçilmedi — önce select_connection kullanın'}
+
+## Notlar
+- Aktif VT seçimi oturum (sunucu süreci) bazındadır; sunucu yeniden
+  başlarsa sıfırlanır.
+- Sorgu sonuçları JSON olarak döner.
+- Yazma/DDL sorguları çalıştırmadan önce etkiyi (WHERE, satır sayısı)
+  doğrulayın.
+- Bağlantı tanımları config.json içinde, şifreler dbpassword.json içinde
+  (şifreli) tutulur.
+`;
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name } = request.params;
+
+  if (name === 'help') {
+    return { content: [{ type: 'text', text: buildHelp() }] };
+  }
 
   if (name === 'list_connections') {
     const { connections } = loadConfig();
