@@ -2,7 +2,7 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { loadConfig, resolveConnection } from '../config.js';
+import { loadConfig, resolveConnection } from '../config.mjs';
 
 const server = new Server(
   {
@@ -60,22 +60,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools };
 });
 
+// MCP tool sonucu: düz nesneyi content formatına çevirir
+function ok(data) {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+  };
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name } = request.params;
 
   if (name === 'list_connections') {
     const { connections } = loadConfig();
-    const list = Object.entries(connections).map(([name, conn]) => ({
-      name,
+    const list = Object.entries(connections).map(([connName, conn]) => ({
+      name: connName,
       id: conn.id,
       type: conn.type,
       environment: conn.environment,
       host: conn.host,
       port: conn.port,
-      database: conn.database,
+      database: conn.database || conn.dbname,
       isActive: conn.id === activeConnectionId,
     }));
-    return { connections: list };
+    return ok({ connections: list });
   }
 
   if (name === 'select_connection') {
@@ -87,11 +94,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     activeConnectionId = connections[connName].id;
-    return { 
-      success: true, 
+    return ok({
+      success: true,
       message: `Aktif VT seçildi: ${connName} (${activeConnectionId})`,
       activeConnectionId,
-    };
+    });
   }
 
   if (name === 'execute_query') {
@@ -119,21 +126,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const conn = resolveConnection(connections[selectedConnName]);
 
     if (conn.type === 'sybase') {
-      const { SybaseManager } = await import('./db/sybase.js');
-      const db = new SybaseManager(conn);
-      await db.connect();
-      const result = await db.execute(query);
-      await db.disconnect();
-      return { result };
+      const { SybaseManager } = await import('./db/sybase.mjs');
+      const db = new SybaseManager([conn]);
+      const result = await db.execute(conn.id, query);
+      return ok({ result });
     }
 
     if (conn.type === 'pg') {
-      const { PgManager } = await import('./db/pg.js');
+      const { PgManager } = await import('./db/pg.mjs');
       const db = new PgManager(conn);
       await db.connect();
       const result = await db.execute(query);
       await db.disconnect();
-      return { result };
+      return ok({ result });
     }
 
     throw new Error(`Unsupported database type: ${conn.type}`);

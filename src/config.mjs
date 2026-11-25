@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Konfigürasyon yönetimi.
  *
@@ -52,11 +50,11 @@
  * tüketiciler (server.js) ortam gruplandırmasından habersiz çalışır.
  */
 
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const crypto = require('node:crypto');
-const { encrypt, decrypt, isEncrypted } = require('./crypto');
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
+import { encrypt, decrypt, isEncrypted } from './crypto.mjs';
 
 /**
  * İnsan okuyabileceği, uniq bağlantı ID'si üretir. İsimden bağımsızdır;
@@ -76,7 +74,7 @@ function makeReadableId(env) {
 }
 
 /** Varsayılan proje kökündeki config yolu (eski davranış / geriye uyum). */
-const DEFAULT_CONFIG_PATH = path.join(__dirname, '..', 'config.json');
+const DEFAULT_CONFIG_PATH = path.join(import.meta.dirname, '..', 'config.json');
 
 /**
  * Global (kullanıcı seviyesi) config dosyasının varsayılan yolunu döndürür.
@@ -327,7 +325,7 @@ function resolveConnection(conn) {
   return resolved;
 }
 
-module.exports = {
+export {
   loadConfig,
   resolveConnection,
   globalConfigPath,

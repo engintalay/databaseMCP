@@ -3,7 +3,7 @@
  */
 
 import pg from 'pg';
-import { withNoProxy } from '../proxy.js';
+import { withNoProxy } from './proxy.mjs';
 
 /**
  * Tek istemci aç, bağlan, çalıştır, kapat. Pool kullanmaz (MCP statelessness).
@@ -118,3 +118,53 @@ async function bulkInsert(conn, table, headers, rows) {
 }
 
 export { withClient, listTables, describeTable, runQuery, execute, bulkInsert };
+
+/**
+ * PostgreSQL yöneticisi (MCP için basit API).
+ */
+export class PgManager {
+  constructor(conn) {
+    this.conn = conn;
+    this.client = null;
+  }
+
+  async connect() {
+    this.client = new pg.Client({
+      host: this.conn.host,
+      port: this.conn.port || 5432,
+      database: this.conn.database ?? this.conn.dbname,
+      user: this.conn.username ?? this.conn.user,
+      password: this.conn.password,
+      ssl: this.conn.ssl ? { rejectUnauthorized: false } : false,
+    });
+    await this.client.connect();
+  }
+
+  async disconnect() {
+    if (this.client) {
+      await this.client.end();
+      this.client = null;
+    }
+  }
+
+  async execute(sql) {
+    if (!this.client) {
+      throw new Error('Not connected. Call connect() first.');
+    }
+    const { rowCount } = await this.client.query(sql);
+    return { success: true, rowCount: rowCount || 0 };
+  }
+
+  async query(sql, limit) {
+    if (!this.client) {
+      throw new Error('Not connected. Call connect() first.');
+    }
+    let query = sql.trim();
+    if (!query.endsWith(';')) query += ';';
+    if (limit && limit > 0 && !/\blimit\b/i.test(query)) {
+      query += ` LIMIT ${Number(limit)}`;
+    }
+    const { rows, rowCount } = await this.client.query(query);
+    return { rows, rowCount: rowCount || 0 };
+  }
+}

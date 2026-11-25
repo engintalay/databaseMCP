@@ -16,12 +16,13 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import SyBase from 'node-sybase';
-import { withNoProxy } from './proxy.js';
+import { withNoProxy } from './proxy.mjs';
 
 // Köprü jar'ının mutlak yolu (manifest Class-Path 'lib/...' jar'ın kendi
 // konumuna göre çözülür, bu yüzden CWD'den bağımsızdır).
 const JAR_PATH = path.join(
-  __dirname,
+  import.meta.dirname,
+  '..',
   '..',
   '..',
   'node_modules',
@@ -66,7 +67,7 @@ class SybaseManager {
     }
 
     const DBInfos = connections.map((c) => ({
-      name: c.name,
+      name: c.name || c.id || 'default',
       host: c.host,
       port: Number(c.port) || SYBASE_PORT,
       dbname: c.dbname,

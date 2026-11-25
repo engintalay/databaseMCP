@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Proxy-dışı bağlantı katmanı.
  *
@@ -49,4 +47,4 @@ async function withNoProxy(fn) {
   }
 }
 
-module.exports = { withNoProxy, PROXY_VARS };
+export { withNoProxy, PROXY_VARS };
