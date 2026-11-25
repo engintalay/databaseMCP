@@ -16,6 +16,9 @@ const server = new Server(
   }
 );
 
+// Aktif VT durumu (oturum bazında)
+let activeConnectionId = null;
+
 const tools = [
   {
     name: 'list_connections',
@@ -23,15 +26,32 @@ const tools = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
-    name: 'execute_query',
-    description: 'Veritabanında SQL sorgusu çalıştırır. Sadece SELECT sorguları için önerilir.',
+    name: 'select_connection',
+    description: 'Aktif veritabanı bağlantısını seçer. execute_query için varsayılan VT olur.',
     inputSchema: {
       type: 'object',
       properties: {
-        connection: { type: 'string', description: 'Connection ID' },
+        connection: { 
+          type: 'string', 
+          description: 'Connection ID (list_connections ile görülebilir)' 
+        },
+      },
+      required: ['connection'],
+    },
+  },
+  {
+    name: 'execute_query',
+    description: 'Veritabanında SQL sorgusu çalıştırır. Sadece SELECT sorguları için önerilir. connection parametresi verilmezse aktif VT kullanılır.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        connection: { 
+          type: 'string', 
+          description: 'Connection ID (opsiyonel, verilmezse aktif VT kullanılır)' 
+        },
         query: { type: 'string', description: 'SQL query to execute' },
       },
-      required: ['connection', 'query'],
+      required: ['query'],
     },
   },
 ];
@@ -53,19 +73,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       host: conn.host,
       port: conn.port,
       database: conn.database,
+      isActive: conn.id === activeConnectionId,
     }));
     return { connections: list };
   }
 
-  if (name === 'execute_query') {
-    const { connection: connName, query } = request.params.arguments;
+  if (name === 'select_connection') {
+    const { connection: connName } = request.params.arguments;
     const { connections } = loadConfig();
 
     if (!connections[connName]) {
       throw new Error(`Connection not found: ${connName}`);
     }
 
-    const conn = resolveConnection(connections[connName]);
+    activeConnectionId = connections[connName].id;
+    return { 
+      success: true, 
+      message: `Aktif VT seçildi: ${connName} (${activeConnectionId})`,
+      activeConnectionId,
+    };
+  }
+
+  if (name === 'execute_query') {
+    const { connection: connName, query } = request.params.arguments;
+    const { connections } = loadConfig();
+
+    // VT belirtilmediyse aktif VT kullan
+    let selectedConnName = connName;
+    if (!selectedConnName) {
+      if (!activeConnectionId) {
+        throw new Error('VT seçilmedi. Önce select_connection ile VT seçin veya execute_query\'e connection parametresi verin.');
+      }
+      // Aktif VT'nin ismini bul
+      const entry = Object.entries(connections).find(([_, conn]) => conn.id === activeConnectionId);
+      if (!entry) {
+        throw new Error(`Aktif VT bulunamadı: ${activeConnectionId}`);
+      }
+      selectedConnName = entry[0];
+    }
+
+    if (!connections[selectedConnName]) {
+      throw new Error(`Connection not found: ${selectedConnName}`);
+    }
+
+    const conn = resolveConnection(connections[selectedConnName]);
 
     if (conn.type === 'sybase') {
       const { SybaseManager } = await import('./db/sybase.js');
