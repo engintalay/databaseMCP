@@ -6,14 +6,16 @@
         "command": [
           "node",
           "/home/engin/projects/databaseMCP/src/mcp/stdio.mjs"
-        ]
+        ],
+        "codemode": false
       },
       "testMCP": {
         "type": "local",
         "command": [
           "node",
           "/home/engin/projects/databaseMCP/src/mcp/test.mjs"
-        ]
+        ],
+        "codemode": false
       }
     }
   }
